@@ -5,34 +5,27 @@ const { Resend } = require("resend");
 const app = express();
 app.use(express.json());
 
+// 1. Initialize Twilio Client (safely handling missing keys)
 let twilioClient = null;
 if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
   twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 }
 
+// 2. Initialize Resend Client
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+// 3. Takeaway Order Webhook
 app.post("/webhook", async (req, res) => {
-  const { customer_name, customer_phone, order_type, delivery_address, order_items } = req.body;
-
-  const missing = [];
-  if (!customer_name) missing.push("customer_name");
-  if (!customer_phone) missing.push("customer_phone");
-  if (!order_type) missing.push("order_type");
-  if (order_type === "delivery" && !delivery_address) missing.push("delivery_address");
-  if (!order_items) missing.push("order_items");
-
-  if (missing.length > 0) {
-    console.log("REJECTED — missing fields:", missing, req.body);
-    return res.status(400).json({ success: false, missing });
-  }
-
   console.log("ORDER RECEIVED:", req.body);
 
-  if (twilioClient && process.env.TWILIO_PHONE_NUMBER) {
+  // Safely extract parameters from ElevenLabs payload
+  const { customer_name, customer_phone, order_items, order_type, delivery_address } = req.body;
+
+  // Send Confirmation SMS via Twilio
+  if (twilioClient && process.env.TWILIO_PHONE_NUMBER && customer_phone) {
     try {
       await twilioClient.messages.create({
-        body: `Hi ${customer_name}, your order (${order_items}) is confirmed for ${order_type}${order_type === "delivery" ? " to " + delivery_address : ""}. Thanks for calling FoodOnTheLine!`,
+        body: `Hi ${customer_name || "there"}, your order (${order_items}) is confirmed for ${order_type}${order_type === "delivery" ? " to " + delivery_address : ""}. Thanks for calling FoodOnTheLine!`,
         from: process.env.TWILIO_PHONE_NUMBER,
         to: customer_phone,
       });
@@ -41,24 +34,26 @@ app.post("/webhook", async (req, res) => {
       console.log("SMS FAILED:", err.message);
     }
   } else {
-    console.log("SMS skipped — Twilio not connected yet");
+    console.log("SMS skipped — Twilio missing configuration or phone number not provided");
   }
 
+  // Send Order Email to Shop Owner via Resend
   try {
     await resend.emails.send({
       from: "onboarding@resend.dev",
       to: process.env.SHOP_EMAIL,
-      subject: `New Order — ${customer_name}`,
-      text: `New order received:\n\nName: ${customer_name}\nPhone: ${customer_phone}\nType: ${order_type}\nAddress: ${delivery_address || "N/A (collection)"}\nItems: ${order_items}`,
+      subject: `New Order Received — ${customer_name || "Customer"}`,
+      text: `New Order Details:\n\nName: ${customer_name}\nType: ${order_type}\nAddress: ${delivery_address || "N/A"}\nItems: ${order_items}\nPhone: ${customer_phone || "N/A"}`,
     });
-    console.log("Email sent to", process.env.SHOP_EMAIL);
+    console.log("Order email sent to", process.env.SHOP_EMAIL);
   } catch (err) {
-    console.log("EMAIL FAILED:", err.message);
+    console.log("ORDER EMAIL FAILED:", err.message);
   }
 
   res.json({ success: true });
 });
 
+// 4. Demo Request Endpoint
 app.post("/book-demo", async (req, res) => {
   const { name, shop, phone, weekly_orders } = req.body;
 
@@ -83,6 +78,8 @@ app.post("/book-demo", async (req, res) => {
   res.json({ success: true });
 });
 
-app.listen(3000, () => {
-  console.log("Server running on http://localhost:3000");
+// 5. Start Server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
