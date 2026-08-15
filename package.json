@@ -1,16 +1,13 @@
 {
   "name": "foodontheline-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^4.19.2",
+    "twilio": "^5.0.0",
+    "resend": "^3.2.0"
   }
 }
