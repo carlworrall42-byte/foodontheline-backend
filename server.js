@@ -16,7 +16,44 @@ if (!WEBHOOK_SECRET) {
 // Replace the bodies with real printer / tablet / SMS code later.
 // Each must throw on failure so we can see it in the logs.
 // ---------------------------------------------------------------
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const SHOP_EMAIL = process.env.SHOP_EMAIL;
+// Until you verify your own domain in Resend, keep the default sender below.
+// With it, Resend only delivers to the email address your Resend account was made with.
+const FROM_EMAIL = process.env.FROM_EMAIL || "FoodOnTheLine <onboarding@resend.dev>";
+
 const notifiers = {
+  email: async (order) => {
+    if (!RESEND_API_KEY || !SHOP_EMAIL) {
+      throw new Error("RESEND_API_KEY or SHOP_EMAIL is not set");
+    }
+    const itemLines = order.items
+      .map((i) => "- " + (typeof i === "string" ? i : JSON.stringify(i)))
+      .join("\n");
+    const text =
+      `New ${order.order_type} order ${order.id}\n` +
+      `Time: ${order.receivedAt}\n` +
+      `Customer: ${order.customer_name}\n` +
+      (order.address ? `Address: ${order.address}\n` : "") +
+      `\nItems:\n${itemLines}\n`;
+
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: FROM_EMAIL,
+        to: [SHOP_EMAIL],
+        subject: `New order ${order.id} (${order.order_type})`,
+        text, // plain text, so customer input can never inject HTML
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`Resend error ${response.status}: ${await response.text()}`);
+    }
+  },
   printer: async (order) => {
     console.log(`[PRINTER] would print order ${order.id}`);
   },
