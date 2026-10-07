@@ -105,6 +105,66 @@ function validate(body) {
 // ---------------------------------------------------------------
 app.get("/health", (req, res) => res.json({ ok: true }));
 
+// ---------------------------------------------------------------
+// Demo requests from the website form
+// ---------------------------------------------------------------
+app.set("trust proxy", 1);
+const ALLOWED_ORIGINS = ["https://foodontheline.co.uk", "https://www.foodontheline.co.uk"];
+
+app.use("/demo-request", (req, res, next) => {
+  const origin = req.get("origin");
+  if (origin && !ALLOWED_ORIGINS.includes(origin)) {
+    return res.status(403).json({ success: false, message: "Not allowed" });
+  }
+  if (origin) {
+    res.set("Access-Control-Allow-Origin", origin);
+    res.set("Vary", "Origin");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  }
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
+const demoHits = new Map(); // ip -> timestamps (max 5 per hour)
+function rateLimited(ip) {
+  const now = Date.now();
+  const recent = (demoHits.get(ip) || []).filter((t) => now - t < 3600000);
+  recent.push(now);
+  demoHits.set(ip, recent);
+  return recent.length > 5;
+}
+
+app.post("/demo-request", async (req, res) => {
+  if (rateLimited(req.ip)) return res.status(429).json({ success: false, message: "Too many requests" });
+  const { business, phone, website } = req.body || {};
+  if (website) return res.json({ success: true }); // honeypot: bots fill this in, humans never see it
+  if (typeof business !== "string" || business.trim().length < 2 || business.length > 100) {
+    return res.status(400).json({ success: false, message: "Please enter your business name" });
+  }
+  if (typeof phone !== "string" || !/^[0-9+()\s-]{6,30}$/.test(phone)) {
+    return res.status(400).json({ success: false, message: "Please enter a valid phone number" });
+  }
+  try {
+    if (!RESEND_API_KEY || !SHOP_EMAIL) throw new Error("Email is not configured");
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: FROM_EMAIL,
+        to: [SHOP_EMAIL],
+        subject: `Demo request: ${business.trim().slice(0, 60)}`,
+        text: `New demo request\n\nBusiness: ${business.trim()}\nPhone: ${phone.trim()}\nTime: ${new Date().toISOString()}\n`,
+      }),
+    });
+    if (!response.ok) throw new Error(`Resend error ${response.status}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("[DEMO REQUEST FAILED]", err.message);
+    res.status(500).json({ success: false, message: "Could not send" });
+  }
+});
+
 app.post("/webhook", checkSecret, async (req, res) => {
   const error = validate(req.body);
   if (error) return res.status(400).json({ success: false, message: error });
